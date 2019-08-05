@@ -67,6 +67,11 @@ The improvements are...
 Improvements to clang-tidy
 --------------------------
 
+- New :doc:`bugprone-flagged-implicit-conversions
+  <clang-tidy/checks/bugprone-flagged-implicit-conversions>` check.
+
+  FIXME: add release notes.
+
 - New :doc:`linuxkernel-must-use-errs
   <clang-tidy/checks/linuxkernel-must-use-errs>` check.
 
