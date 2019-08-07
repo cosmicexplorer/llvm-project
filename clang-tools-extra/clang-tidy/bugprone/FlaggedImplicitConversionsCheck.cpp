@@ -37,7 +37,8 @@ void FlaggedImplicitConversionsCheck::registerMatchers(MatchFinder *Finder) {
       anyOf(cxxConstructExpr(hasArgument(0, expr().bind("ctor_arg")))
                 .bind("ctor_expr"),
             callExpr(callee(functionDecl().bind("conv_func_decl")),
-                     hasArgument(0, expr().bind("conv_arg"))));
+                     hasArgument(0, expr().bind("conv_arg"))),
+            expr().bind("unrecognized_expr"));
 
   Finder->addMatcher(implicitCastExpr(hasSourceExpression(convert_expr))
                          .bind("cast_expression"),
@@ -88,15 +89,19 @@ void FlaggedImplicitConversionsCheck::check(
     return;
   }
 
+  const auto castToType =
+      ConversionExpr->getType().getDesugaredType(*Result.Context);
   {
     std::stringstream s;
-    s << "expression contains an implicit conversion to ::std::basic_string";
+    s << "expression contains an implicit conversion to "
+      << castToType.getAsString();
     diag(ConversionExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note);
+    /* TODO: note where the type was defined? */
   }
 
   if (const auto *ConverterFunction =
           Result.Nodes.getNodeAs<FunctionDecl>("conv_func_decl")) {
-    /* const auto *Arg = Result.Nodes.getNodeAs<Expr>("conv_arg"); */
+    const auto *Arg = Result.Nodes.getNodeAs<Expr>("conv_arg");
     std::stringstream s;
     s << "conversion function "
       << ConverterFunction->getNameInfo().getName().getAsString()
@@ -105,11 +110,17 @@ void FlaggedImplicitConversionsCheck::check(
   } else if (const auto *ConstructorExpr =
                  Result.Nodes.getNodeAs<CXXConstructExpr>("ctor_expr")) {
     const auto *Constructor = ConstructorExpr->getConstructor();
-    /* const auto *Arg = Result.Nodes.getNodeAs<Expr>("ctor_arg"); */
+    const auto *Arg = Result.Nodes.getNodeAs<Expr>("ctor_arg");
     std::stringstream s;
     s << "constructor " << Constructor->getNameInfo().getName().getAsString()
       << " was used";
     diag(Constructor->getLocation(), s.str(), DiagnosticIDs::Note);
+  } else {
+    const auto *UnrecognizedExpr =
+        Result.Nodes.getNodeAs<Expr>("unrecognized_expr");
+    std::stringstream s;
+    s << "unrecognized type of implicit conversion!!!";
+    diag(UnrecognizedExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note);
   }
 
   {
