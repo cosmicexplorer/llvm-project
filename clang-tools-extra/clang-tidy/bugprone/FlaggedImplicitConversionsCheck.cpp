@@ -26,32 +26,22 @@ void FlaggedImplicitConversionsCheck::registerMatchers(MatchFinder *Finder) {
   std::string a = s;
 
   /* NB: `std::string` is a template instantiation -- do we need this? */
-  const auto string_type_decl =
-      classTemplateSpecializationDecl(hasName("::std::basic_string"));
+  /* const auto string_type_decl = */
+  /*     classTemplateSpecializationDecl(hasName("::std::basic_string")); */
 
-  /* Match implicit type conversions (some stolen from StringCompareCheck.cpp!).
+  /* Match implicit type conversions (some stolen from
+   * StringCompareCheck.cpp!).
    */
-  const auto string_type_matcher = hasDeclaration(string_type_decl);
-  Finder->addMatcher(
-      implicitCastExpr(hasImplicitDestinationType(string_type_matcher))
-          .bind("implicit_str_conversion"),
-      this);
+  /* const auto string_type_matcher = hasDeclaration(string_type_decl); */
+  const auto convert_expr =
+      anyOf(cxxConstructExpr(hasArgument(0, expr().bind("ctor_arg")))
+                .bind("ctor_expr"),
+            callExpr(callee(functionDecl().bind("conv_func_decl")),
+                     hasArgument(0, expr().bind("conv_arg"))));
 
-  /* Match explicit type conversions (some stolen from
-   * DurationConversionCastCheck.cpp!). */
-  const auto explicit_call_matcher = ignoringImpCasts(callExpr(
-      callee(functionDecl().bind("explicit_conv_func_decl")),
-      hasArgument(0,
-                  expr(hasType(string_type_decl)).bind("explicit_conv_arg"))));
-  Finder->addMatcher(
-      expr(anyOf(
-          cxxStaticCastExpr(hasSourceExpression(explicit_call_matcher))
-              .bind("explicit_cast_expr"),
-          cStyleCastExpr(hasSourceExpression(explicit_call_matcher))
-              .bind("explicit_cast_expr"),
-          cxxFunctionalCastExpr(hasSourceExpression(explicit_call_matcher))
-              .bind("explicit_cast_expr"))),
-      this);
+  Finder->addMatcher(implicitCastExpr(hasSourceExpression(convert_expr))
+                         .bind("cast_expression"),
+                     this);
 }
 
 static std::string rangeText(SourceRange range, ASTContext &ctx) {
@@ -89,43 +79,52 @@ static bool isInMacro(const MatchFinder::MatchResult &Result, const Expr *E) {
 void FlaggedImplicitConversionsCheck::check(
     const MatchFinder::MatchResult &Result) {
 
-  if (const auto *ConversionExpr =
-          Result.Nodes.getNodeAs<ImplicitCastExpr>("implicit_str_conversion")) {
-    /* Operate on implicit casts! */
+  const auto *ConversionExpr =
+      Result.Nodes.getNodeAs<CastExpr>("cast_expression");
+
+  /* FIXME: This is taken from DurationConversionCastCheck.cpp -- is this what
+   * we want? */
+  if (isInMacro(Result, ConversionExpr)) {
+    return;
+  }
+
+  {
+    std::stringstream s;
+    s << "expression contains an implicit conversion to ::std::basic_string";
+    diag(ConversionExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note);
+  }
+
+  if (const auto *ConverterFunction =
+          Result.Nodes.getNodeAs<FunctionDecl>("conv_func_decl")) {
+    /* const auto *Arg = Result.Nodes.getNodeAs<Expr>("conv_arg"); */
+    std::stringstream s;
+    s << "conversion function "
+      << ConverterFunction->getNameInfo().getName().getAsString()
+      << " was used";
+    diag(ConverterFunction->getLocation(), s.str(), DiagnosticIDs::Note);
+  } else if (const auto *ConstructorExpr =
+                 Result.Nodes.getNodeAs<CXXConstructExpr>("ctor_expr")) {
+    const auto *Constructor = ConstructorExpr->getConstructor();
+    /* const auto *Arg = Result.Nodes.getNodeAs<Expr>("ctor_arg"); */
+    std::stringstream s;
+    s << "constructor " << Constructor->getNameInfo().getName().getAsString()
+      << " was used";
+    diag(Constructor->getLocation(), s.str(), DiagnosticIDs::Note);
+  }
+
+  {
+    std::stringstream s;
+
     const std::string exprText =
         rangeText(ConversionExpr->getSourceRange(), *Result.Context);
     const std::string normalizedExprText =
         normalizeCastExpressionText(exprText);
 
-    std::stringstream s1;
-    s1 << "expression `" << exprText
-       << "` contains an implicit conversion to ::std::basic_string";
-    diag(ConversionExpr->getBeginLoc(), s1.str(), DiagnosticIDs::Note);
-
-    if (const auto *ConverterNamedDecl =
-            ConversionExpr->getConversionFunction()) {
-      std::stringstream s2;
-      const auto *nameId = ConverterNamedDecl->getIdentifier();
-      const auto declName = DeclarationName(nameId);
-      s2 << "conversion function " << declName.getAsString() << " was used";
-      diag(ConverterNamedDecl->getLocation(), s2.str());
-    }
-
-    std::stringstream s3;
-    s3 << "std::string(" << normalizedExprText << ")";
+    s << "std::string(" << normalizedExprText << ")";
     diag(ConversionExpr->getBeginLoc(),
-         "insert an explicit std::string() conversion")
+         "insert an explicit std::string conversion")
         << FixItHint::CreateReplacement(ConversionExpr->getSourceRange(),
-                                        s3.str());
-  } else if (const auto *MatchedCast = Result.Nodes.getNodeAs<ExplicitCastExpr>(
-                 "explicit_cast_expr")) {
-    /* FIXME: This is taken from DurationConversionCastCheck.cpp -- is this what
-     * we want? */
-    if (isInMacro(Result, MatchedCast)) {
-      return;
-    }
-    /* Operate on explicit casts! */
-    /* const auto* FuncDecl = Result.Nodes.getNodeAs<FunctionDecl>(""); */
+                                        s.str());
   }
 }
 
