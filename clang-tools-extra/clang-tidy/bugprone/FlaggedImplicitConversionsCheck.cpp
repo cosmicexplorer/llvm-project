@@ -40,9 +40,30 @@ void FlaggedImplicitConversionsCheck::registerMatchers(MatchFinder *Finder) {
                      hasArgument(0, expr().bind("conv_arg"))),
             expr().bind("unrecognized_expr"));
 
-  Finder->addMatcher(implicitCastExpr(hasSourceExpression(convert_expr))
-                         .bind("cast_expression"),
-                     this);
+  Finder->addMatcher(
+      implicitCastExpr(
+          hasImplicitDestinationType(
+              hasDeclaration(namedDecl(
+                                 /* hasName("::std::basic_string") */
+                                 )
+                                 .bind("dest_type_decl"))
+              /* anyOf(recordType() */
+              /*           .bind("string_impl_dest"), */
+              /*       type().bind("impl_dest")), */
+              )
+          /* hasSourceExpression(convert_expr) */
+          )
+          .bind("cast_expression"),
+      this);
+
+  {
+    std::stringstream s(ToTypesOption);
+    std::string to_type;
+    std::string replacement;
+    while (std::getline(s, to_type, '?') && std::getline(s, replacement, ',')) {
+      replacementSuggestions[to_type] = replacement;
+    }
+  }
 }
 
 static std::string rangeText(SourceRange range, ASTContext &ctx) {
@@ -81,7 +102,8 @@ void FlaggedImplicitConversionsCheck::check(
     const MatchFinder::MatchResult &Result) {
 
   const auto *ConversionExpr =
-      Result.Nodes.getNodeAs<CastExpr>("cast_expression");
+      Result.Nodes.getNodeAs<ImplicitCastExpr>("cast_expression");
+  const auto *SubExpr = ConversionExpr->getSubExprAsWritten();
 
   /* FIXME: This is taken from DurationConversionCastCheck.cpp -- is this what
    * we want? */
@@ -89,40 +111,72 @@ void FlaggedImplicitConversionsCheck::check(
     return;
   }
 
-  const auto castToType =
-      ConversionExpr->getType().getDesugaredType(*Result.Context);
+  /* if (const auto *ConverterFunction = */
+  /*         Result.Nodes.getNodeAs<FunctionDecl>("conv_func_decl")) { */
+  /*   /\* const auto *Arg = Result.Nodes.getNodeAs<Expr>("conv_arg"); *\/ */
+  /*   std::stringstream s; */
+  /*   s << "conversion function " */
+  /*     << ConverterFunction->getNameInfo().getName().getAsString() */
+  /*     << " was used"; */
+  /*   diag(ConverterFunction->getLocation(), s.str(), DiagnosticIDs::Note); */
+  /* } else if (const auto *ConstructorExpr = */
+  /*                Result.Nodes.getNodeAs<CXXConstructExpr>("ctor_expr")) { */
+  /*   const auto *Constructor = ConstructorExpr->getConstructor(); */
+  /*   /\* const auto *Arg = Result.Nodes.getNodeAs<Expr>("ctor_arg"); *\/ */
+  /*   std::stringstream s; */
+  /*   s << "constructor " << Constructor->getNameInfo().getName().getAsString()
+   */
+  /*     << " was used"; */
+  /*   diag(Constructor->getLocation(), s.str(), DiagnosticIDs::Note); */
+  /* } else { */
+  /*   const auto *UnrecognizedExpr = */
+  /*       Result.Nodes.getNodeAs<Expr>("unrecognized_expr"); */
+  /*   std::stringstream s; */
+  /*   s << "unrecognized type of implicit conversion!!!"; */
+  /*   diag(UnrecognizedExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note); */
+  /* } */
+
+  const auto *RetTypeDecl = Result.Nodes.getNodeAs<NamedDecl>("dest_type_decl");
+  std::string returnTypeStr = RetTypeDecl->getQualifiedNameAsString();
+  /* returnTypeStr = RetType->getCanonicalTypeInternal() */
+  /*                     .getDesugaredType(*Result.Context) */
+  /*                     .getAsString(); */
+  /* if (const auto *StrType = Result.Nodes.getNodeAs<Type>("string_impl_dest"))
+   * { */
+  /*   returnTypeStr = ":WOW"; */
+  /* } */
+  /* if (const auto *TemplateType =
+   * RetType->getAs<TemplateSpecializationType>()) { */
+  /*   const auto *TempDecl =
+   * TemplateType->getTemplateName().getAsTemplateDecl(); */
+  /*   returnTypeStr = TempDecl->getQualifiedNameAsString(); */
+  /* } else { */
+  /*   returnTypeStr = RetType->getLocallyUnqualifiedSingleStepDesugaredType()
+   */
+  /*                       .getDesugaredType(*Result.Context) */
+  /*                       .getAsString(); */
+  /* } */
+
+  if (replacementSuggestions.end() ==
+      replacementSuggestions.find(returnTypeStr)) {
+    /* for (auto it = replacementSuggestions.begin(); */
+    /*      it != replacementSuggestions.end(); ++it) { */
+    /*   std::stringstream s; */
+    /*   s << "first: " << it->first << ", second: " << it->second; */
+    /*   diag(ConversionExpr->getBeginLoc(), s.str()); */
+    /* } */
+    /* diag(ConversionExpr->getBeginLoc(), ToTypesOption); */
+    return;
+  }
+
   {
     std::stringstream s;
-    s << "expression contains an implicit conversion to "
-      << castToType.getAsString();
-    diag(ConversionExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note);
-    /* TODO: note where the type was defined? */
+    s << "expression contains an implicit conversion to " << returnTypeStr
+      << " from " << SubExpr->getType().getAsString();
+    diag(ConversionExpr->getBeginLoc(), s.str());
   }
 
-  if (const auto *ConverterFunction =
-          Result.Nodes.getNodeAs<FunctionDecl>("conv_func_decl")) {
-    const auto *Arg = Result.Nodes.getNodeAs<Expr>("conv_arg");
-    std::stringstream s;
-    s << "conversion function "
-      << ConverterFunction->getNameInfo().getName().getAsString()
-      << " was used";
-    diag(ConverterFunction->getLocation(), s.str(), DiagnosticIDs::Note);
-  } else if (const auto *ConstructorExpr =
-                 Result.Nodes.getNodeAs<CXXConstructExpr>("ctor_expr")) {
-    const auto *Constructor = ConstructorExpr->getConstructor();
-    const auto *Arg = Result.Nodes.getNodeAs<Expr>("ctor_arg");
-    std::stringstream s;
-    s << "constructor " << Constructor->getNameInfo().getName().getAsString()
-      << " was used";
-    diag(Constructor->getLocation(), s.str(), DiagnosticIDs::Note);
-  } else {
-    const auto *UnrecognizedExpr =
-        Result.Nodes.getNodeAs<Expr>("unrecognized_expr");
-    std::stringstream s;
-    s << "unrecognized type of implicit conversion!!!";
-    diag(UnrecognizedExpr->getBeginLoc(), s.str(), DiagnosticIDs::Note);
-  }
-
+  std::string replacement = replacementSuggestions[returnTypeStr];
   {
     std::stringstream s;
 
@@ -131,7 +185,7 @@ void FlaggedImplicitConversionsCheck::check(
     const std::string normalizedExprText =
         normalizeCastExpressionText(exprText);
 
-    s << "std::string(" << normalizedExprText << ")";
+    s << replacement << "(" << normalizedExprText << ")";
     diag(ConversionExpr->getBeginLoc(),
          "insert an explicit std::string conversion")
         << FixItHint::CreateReplacement(ConversionExpr->getSourceRange(),

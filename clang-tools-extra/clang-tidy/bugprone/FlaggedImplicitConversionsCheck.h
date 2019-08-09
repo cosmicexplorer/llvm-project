@@ -10,6 +10,10 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_BUGPRONE_FLAGGEDIMPLICITCONVERSIONSCHECK_H
 
 #include "../ClangTidyCheck.h"
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace clang {
 namespace tidy {
@@ -20,17 +24,18 @@ namespace bugprone {
 /// For the user-facing documentation see:
 /// http://clang.llvm.org/extra/clang-tidy/checks/bugprone-flagged-implicit-conversions.html
 class FlaggedImplicitConversionsCheck : public ClangTidyCheck {
-  const std::string SomeOption1;
+  const std::string ToTypesOption;
+
+  std::unordered_map<std::string, std::string> replacementSuggestions;
 
 public:
   FlaggedImplicitConversionsCheck(StringRef Name, ClangTidyContext *Context)
       : ClangTidyCheck(Name, Context),
-        SomeOption1(Options.get("SomeOption1", "string default")) {}
+        ToTypesOption(Options.get("ToTypes", "")), replacementSuggestions() {}
 
   void storeOptions(ClangTidyOptions::OptionMap &Opts) override {
-    Options.store(Opts, "SomeOption1", SomeOption1);
+    Options.store(Opts, "ToTypes", ToTypesOption);
   }
-
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
